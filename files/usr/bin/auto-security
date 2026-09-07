@@ -1,0 +1,100 @@
+#!/bin/sh
+# OpenWRT Auto-Security Management Command v2.0
+
+INSTALL_DIR="/opt/auto-security"
+
+case "$1" in
+    "status"|"report")
+        $INSTALL_DIR/monitor.sh report
+        ;;
+    "correlation")
+        $INSTALL_DIR/monitor.sh correlation
+        ;;
+    "live")
+        $INSTALL_DIR/monitor.sh live
+        ;;
+    "banned")
+        $INSTALL_DIR/monitor.sh banned
+        ;;
+    "whitelist")
+        $INSTALL_DIR/monitor.sh whitelist
+        ;;
+    "whitelist-add")
+        if [ -z "$2" ]; then
+            echo "Usage: auto-security whitelist-add <IP|CIDR>"
+            exit 1
+        fi
+        $INSTALL_DIR/monitor.sh whitelist-add "$2"
+        ;;
+    "whitelist-remove")
+        if [ -z "$2" ]; then
+            echo "Usage: auto-security whitelist-remove <IP|CIDR>"
+            exit 1
+        fi
+        $INSTALL_DIR/monitor.sh whitelist-remove "$2"
+        ;;
+    "scan")
+        echo "🔍 Running manual threat scan..."
+        $INSTALL_DIR/auto_ban.sh
+        ;;
+    "unban")
+        if [ -z "$2" ]; then
+            echo "Usage: auto-security unban <IP>"
+            exit 1
+        fi
+        $INSTALL_DIR/monitor.sh unban "$2"
+        ;;
+    "reset")
+        $INSTALL_DIR/monitor.sh reset
+        ;;
+    "save")
+        $INSTALL_DIR/monitor.sh save
+        ;;
+    "restore")
+        $INSTALL_DIR/monitor.sh restore
+        ;;
+    "install")
+        echo "🚀 Auto-Security v2.0-radxa already installed!"
+        echo "Location: $INSTALL_DIR"
+        echo "Config: $INSTALL_DIR/auto-security.conf"
+        ;;
+    "version")
+        echo "Auto-Security v2.0-radxa"
+        echo "Built for Radxa E24C"
+        ;;
+    *)
+        echo "OpenWRT Auto-Security System v2.0-radxa"
+        echo "Customized for Radxa E24C (OpenWRT 24.10)"
+        echo ""
+        echo "Usage: auto-security {command}"
+        echo ""
+        echo "📊 Reporting:"
+        echo "  status       - Show security status report"
+        echo "  correlation  - Show correlation with mwan3/AdGuard/netdata"
+        echo "  live         - Monitor attacks in real-time (5 min timeout)"
+        echo "  banned       - List currently banned IPs with details"
+        echo ""
+        echo "✅ Whitelist Management:"
+        echo "  whitelist          - Show whitelist entries"
+        echo "  whitelist-add IP   - Add IP/CIDR to whitelist"
+        echo "  whitelist-remove IP- Remove IP/CIDR from whitelist"
+        echo ""
+        echo "🔨 Ban Management:"
+        echo "  scan        - Run manual threat detection"
+        echo "  unban IP    - Remove specific IP from ban list"
+        echo "  reset       - Remove all bans"
+        echo "  save        - Save bans to persistent storage"
+        echo "  restore     - Restore bans from backup"
+        echo ""
+        echo "🔧 Service:"
+        echo "  /etc/init.d/auto-security start|stop|restart|enable|disable"
+        echo ""
+        echo "Examples:"
+        echo "  auto-security status"
+        echo "  auto-security live"
+        echo "  auto-security whitelist-add 192.168.1.100"
+        echo "  auto-security whitelist-add 10.0.0.0/8"
+        echo "  auto-security unban 1.2.3.4"
+        echo "  auto-security correlation"
+        ;;
+esac

@@ -1,0 +1,121 @@
+<%+header%>
+<div class="cbi-map" id="auto-security-whitelist">
+    <h2><%= _("Whitelist Management") %></h2>
+    <div class="cbi-map-descr">
+        <%= _("IP addresses and CIDR ranges that will never be banned. Add your management IPs here.") %>
+    </div>
+
+    <div class="cbi-section">
+        <div class="cbi-value">
+            <label><%= _("Add to Whitelist") %></label>
+            <div class="cbi-value-field">
+                <input type="text" id="whitelist-input" class="cbi-input-text" placeholder="192.168.1.100 or 10.0.0.0/8">
+                <button class="btn btn-success" onclick="addWhitelist()"><%= _("Add") %></button>
+            </div>
+        </div>
+    </div>
+
+    <div class="cbi-section">
+        <table class="table table-striped" id="whitelist-table">
+            <thead>
+                <tr>
+                    <th><%= _("Entry") %></th>
+                    <th><%= _("Type") %></th>
+                    <th><%= _("Action") %></th>
+                </tr>
+            </thead>
+            <tbody id="whitelist-tbody">
+                <tr><td colspan="3" class="text-center"><%= _("Loading...") %></td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    function loadWhitelist() {
+        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/whitelist") %>')
+            .then(response => response.json())
+            .then(data => {
+                parseWhitelistOutput(data.output);
+            })
+            .catch(err => {
+                document.getElementById('whitelist-tbody').innerHTML = 
+                    '<tr><td colspan="3" class="text-center error">Error: ' + err + '</td></tr>';
+            });
+    }
+
+    function parseWhitelistOutput(output) {
+        const lines = output.split('\n');
+        const tbody = document.getElementById('whitelist-tbody');
+        tbody.innerHTML = '';
+        
+        let hasEntries = false;
+        lines.forEach(line => {
+            line = line.trim();
+            if (!line || line.startsWith('#') || line.startsWith('✅')) return;
+            
+            hasEntries = true;
+            const entry = line.trim();
+            const type = entry.includes('/') ? '<%= _("CIDR") %>' : '<%= _("IP") %>';
+            
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${escapeHtml(entry)}</td>
+                <td>${type}</td>
+                <td><button class="btn btn-danger btn-xs" onclick="removeWhitelist('${escapeHtml(entry)}')"><%= _("Remove") %></button></td>
+            `;
+            tbody.appendChild(row);
+        });
+        
+        if (!hasEntries) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center"><%= _("No whitelist entries") %></td></tr>';
+        }
+    }
+
+    function addWhitelist() {
+        const input = document.getElementById('whitelist-input');
+        const entry = input.value.trim();
+        if (!entry) return alert('<%= _("Enter an IP or CIDR") %>');
+        
+        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/whitelist_add") %>', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'ip=' + encodeURIComponent(entry)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                input.value = '';
+                loadWhitelist();
+            } else {
+                alert('<%= _("Error") %>: ' + (data.error || '<%= _("Unknown error") %>'));
+            }
+        });
+    }
+
+    function removeWhitelist(entry) {
+        if (!confirm('<%= _("Remove") %> ' + entry + '?')) return;
+        
+        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/whitelist_remove") %>', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'ip=' + encodeURIComponent(entry)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadWhitelist();
+            } else {
+                alert('<%= _("Error") %>: ' + (data.error || '<%= _("Unknown error") %>'));
+            }
+        });
+    }
+
+    function escapeHtml(text) {
+        return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
+    }
+
+    loadWhitelist();
+</script>
+
+<%+footer%>

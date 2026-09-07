@@ -1,0 +1,135 @@
+<%+header%>
+<div class="cbi-map" id="auto-security-banned">
+    <h2><%= _("Banned IPs") %></h2>
+    <div class="cbi-map-descr">
+        <%= _("Currently banned IP addresses. Click Unban to remove a ban.") %>
+    </div>
+    
+    <div class="cbi-section">
+        <table class="table table-striped" id="banned-table">
+            <thead>
+                <tr>
+                    <th><%= _("IP Address") %></th>
+                    <th><%= _("Family") %></th>
+                    <th><%= _("Attacks") %></th>
+                    <th><%= _("Banned Since") %></th>
+                    <th><%= _("Action") %></th>
+                </thead>
+                <tbody id="banned-tbody">
+                    <tr><td colspan="5" class="text-center"><%= _("Loading...") %></td></tr>
+                </tbody>
+            </table>
+        </table>
+    </div>
+    
+    <div class="cbi-section">
+        <h3><%= _("CIDR Bans") %></h3>
+        <table class="table table-striped" id="cidr-table">
+            <thead>
+                <tr>
+                    <th><%= _("CIDR Range") %></th>
+                    <th><%= _("Action") %></th>
+                </thead>
+                <tbody id="cidr-tbody">
+                    <tr><td colspan="2" class="text-center"><%= _("Loading...") %></td></tr>
+                </tbody>
+            </table>
+        </table>
+    </div>
+</div>
+
+<script>
+    function loadBanned() {
+        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/banned") %>')
+            .then(response => response.json())
+            .then(data => {
+                parseBannedOutput(data.output);
+            })
+            .catch(err => {
+                document.getElementById('banned-tbody').innerHTML = 
+                    '<tr><td colspan="5" class="text-center error">Error: ' + err + '</td></tr>';
+            });
+    }
+
+    function parseBannedOutput(output) {
+        const lines = output.split('\n');
+        const tbody = document.getElementById('banned-tbody');
+        const cidrBody = document.getElementById('cidr-tbody');
+        tbody.innerHTML = '';
+        cidrBody.innerHTML = '';
+        
+        let hasBanned = false;
+        let hasCidr = false;
+        
+        lines.forEach(line => {
+            line = line.trim();
+            if (!line) return;
+            
+            // Parse: "   IP (family) - attacks attacks (date)"
+            const match = line.match(/^\s+(\S+)\s+\((\w+)\)\s+-\s+(\S+)\s+attacks\s+\((.+)\)/);
+            if (match) {
+                hasBanned = true;
+                const [_, ip, family, attacks, date] = match;
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${escapeHtml(ip)}</td>
+                    <td>${escapeHtml(family)}</td>
+                    <td>${escapeHtml(attacks)}</td>
+                    <td>${escapeHtml(date)}</td>
+                    <td><button class="btn btn-danger btn-xs" onclick="unbanIp('${escapeHtml(ip)}')"><%= _("Unban") %></button></td>
+                `;
+                tbody.appendChild(row);
+                return;
+            }
+            
+            // Parse CIDR: "   CIDR"
+            const cidrMatch = line.match(/^\s+(\S+\/\d+)$/);
+            if (cidrMatch) {
+                hasCidr = true;
+                const cidr = cidrMatch[1];
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${escapeHtml(cidr)}</td>
+                    <td><button class="btn btn-danger btn-xs" onclick="unbanCidr('${escapeHtml(cidr)}')"><%= _("Unban") %></button></td>
+                `;
+                cidrBody.appendChild(row);
+            }
+        });
+        
+        if (!hasBanned) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center"><%= _("No banned IPs") %></td></tr>';
+        }
+        if (!hasCidr) {
+            cidrBody.innerHTML = '<tr><td colspan="2" class="text-center"><%= _("No banned CIDR ranges") %></td></tr>';
+        }
+    }
+
+    function unbanIp(ip) {
+        if (!confirm('<%= _("Unban IP") %> ' + ip + '?')) return;
+        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/unban") %>', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'ip=' + encodeURIComponent(ip)
+        })
+        .then(response => response.json())
+        .then(data => {
+            alert(data.output || '<%= _("Done") %>');
+            loadBanned();
+        });
+    }
+
+    function unbanCidr(cidr) {
+        // CIDR unbanning not directly supported via API, would need custom implementation
+        alert('<%= _("CIDR unban not yet implemented via UI") %>');
+    }
+
+    function escapeHtml(text) {
+        return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
+    }
+
+    // Auto-refresh every 15 seconds
+    setInterval(loadBanned, 15000);
+    loadBanned();
+</script>
+
+<%+footer%>

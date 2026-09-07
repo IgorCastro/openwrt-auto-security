@@ -1,0 +1,32 @@
+<%+header%>
+<div class="cbi-map" id="auto-security-overview">
+    <h2><%= _("Auto-Security Overview") %></h2>
+    <div id="overview-content">
+        <div class="loading"><%= _("Loading...") %></div>
+    </div>
+</div>
+
+<script>
+    function loadOverview() {
+        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/status") %>')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('overview-content').innerHTML = 
+                    '<pre style="white-space: pre-wrap; font-family: monospace;">' + escapeHtml(data.output) + '</pre>';
+            })
+            .catch(err => {
+                document.getElementById('overview-content').innerHTML = 
+                    '<div class="error">Error loading overview: ' + err + '</div>';
+            });
+    }
+
+    function escapeHtml(text) {
+        return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
+    }
+
+    // Auto-refresh every 30 seconds
+    setInterval(loadOverview, 30000);
+    loadOverview();
+</script>
+
+<%+footer%>
