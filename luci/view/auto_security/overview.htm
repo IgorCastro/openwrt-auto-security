@@ -7,24 +7,35 @@
 </div>
 
 <script>
+    function escapeHtml(text) {
+        return String(text == null ? "" : text)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function loadOverview() {
-        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/status") %>')
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('overview-content').innerHTML = 
-                    '<pre style="white-space: pre-wrap; font-family: monospace;">' + escapeHtml(data.output) + '</pre>';
+        fetch('/cgi-bin/auto-security/api/status', {credentials: 'same-origin'})
+            .then(function(response) {
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.text().then(function(text) {
+                    try {
+                        return JSON.parse(text);
+                    } catch (e) {
+                        throw new Error('Invalid server response: ' + text.substring(0, 120));
+                    }
+                });
             })
-            .catch(err => {
-                document.getElementById('overview-content').innerHTML = 
-                    '<div class="error">Error loading overview: ' + err + '</div>';
+            .then(function(data) {
+                document.getElementById('overview-content').innerHTML =
+                    '<pre style="white-space: pre-wrap; font-family: monospace;">' + escapeHtml(data.output || '') + '</pre>';
+            })
+            .catch(function(err) {
+                document.getElementById('overview-content').innerHTML =
+                    '<div class="error">Error loading overview: ' + escapeHtml(err.message || err) + '</div>';
             });
     }
 
-    function escapeHtml(text) {
-        return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
-    }
-
-    // Auto-refresh every 30 seconds
     setInterval(loadOverview, 30000);
     loadOverview();
 </script>

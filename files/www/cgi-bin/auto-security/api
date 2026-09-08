@@ -1,0 +1,173 @@
+#!/bin/sh
+# Auto-Security API (uhttpd CGI)
+# Serves JSON to the LuCI views. LAN-only + optional API password.
+# Endpoint: /cgi-bin/auto-security/api/<action>
+
+json_escape() {
+	python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null
+}
+
+json_output() {
+	# $1 = raw text to wrap as {"output": "..."}
+	local body
+	body=$(printf '%s' "$1" | json_escape)
+	echo 'Content-Type: application/json'
+	echo ''
+	printf '{"output": %s}\n' "${body:-\"\"}"
+}
+
+json_ok() {
+	# $1 = extra output text (optional)
+	local body
+	body=$(printf '%s' "$1" | json_escape)
+	echo 'Content-Type: application/json'
+	echo ''
+	if [ -n "$1" ]; then
+		printf '{"success": true, "output": %s}\n' "$body"
+	else
+		printf '{"success": true}\n'
+	fi
+}
+
+json_err() {
+	# $1 = message
+	local body
+	body=$(printf '%s' "$1" | json_escape)
+	echo 'Status: 400 Bad Request'
+	echo 'Content-Type: application/json'
+	echo ''
+	printf '{"success": false, "error": %s}\n' "$body"
+}
+
+# --- Auth: LAN-only networks ---
+# uhttpd sets REMOTE_ADDR for CGI. Allow loopback, RFC1918, ULA.
+REMOTE_IP="${REMOTE_ADDR:-}"
+lan_allowed() {
+	case "$REMOTE_IP" in
+		127.*|::1) return 0 ;;
+		192.168.*|10.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|fd*|FD*|fe80:*|FE80:*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# Optional API password: if /opt/auto-security/config/admin.passhash exists
+# (format: "user:sha256hex"), require header X-Api-Password or matching user.
+# LAN clients without password still allowed ONLY for read-only actions.
+PASSFILE="/opt/auto-security/config/admin.passhash"
+check_write_auth() {
+	# Read-only actions need LAN only. Write actions need password if one is set.
+	[ -f "$PASSFILE" ] || return 0
+	local given=""
+	# Header X-Api-Password arrives as HTTP_X_API_PASSWORD in CGI env
+	given="${HTTP_X_API_PASSWORD:-}"
+	if [ -z "$given" ]; then
+		# also accept password in POST body field "api_password"
+		given=$(printf '%s' "$POST_DATA" | sed -n 's/.*api_password=\([^&]*\).*/\1/p')
+	fi
+	[ -z "$given" ] && return 1
+	local want
+	want=$(cut -d: -f2- "$PASSFILE" | tr -d ' \n')
+	local goth
+	goth=$(printf '%s' "$given" | sha256sum | cut -d' ' -f1)
+	[ -n "$want" ] && [ "$goth" = "$want" ]
+}
+
+if ! lan_allowed; then
+	echo 'Status: 403 Forbidden'
+	echo 'Content-Type: application/json'
+	echo ''
+	echo '{"success": false, "error": "LAN only"}'
+	exit 0
+fi
+
+ACTION=$(printf '%s' "${PATH_INFO:-}" | sed 's|^/||; s|/.*||')
+
+# Read POST body once for POST actions
+POST_DATA=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+	# CONTENT_LENGTH may be unset; read with timeout guard
+	if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+		POST_DATA=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+	else
+		POST_DATA=$(dd bs=1 count=4096 2>/dev/null)
+	fi
+fi
+
+post_field() {
+	# $1 = field name; url-decodes +,/,%XX (basic)
+	printf '%s' "$POST_DATA" | sed -n "s/.*$1=\([^&]*\).*/\1/p" | sed 's/+/ /g; s/%2F/\//gI; s/%3A/:/gI; s/%40/@/gI; s/%2E/./gI; s/%5F/_/gI; s/%2D/-/gI'
+}
+
+case "$ACTION" in
+	status)
+		json_output "$(/opt/auto-security/monitor.sh report 2>&1)"
+		;;
+	banned)
+		json_output "$(/opt/auto-security/monitor.sh banned 2>&1)"
+		;;
+	whitelist)
+		json_output "$(/opt/auto-security/monitor.sh whitelist 2>&1)"
+		;;
+	correlation)
+		json_output "$(/opt/auto-security/monitor.sh correlation 2>&1)"
+		;;
+	live)
+		json_output "$(logread 2>/dev/null | grep 'Log-Blocked-WAN-Access' | tail -50 2>&1)"
+		;;
+	scan)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		out=$(/opt/auto-security/auto_ban.sh 2>&1)
+		json_ok "$out"
+		;;
+	save)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		out=$(/opt/auto-security/monitor.sh save 2>&1)
+		json_ok "$out"
+		;;
+	restore)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		out=$(/opt/auto-security/monitor.sh restore 2>&1)
+		json_ok "$out"
+		;;
+	reset)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		out=$(/opt/auto-security/monitor.sh reset 2>&1)
+		json_ok "$out"
+		;;
+	unban)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		IP=$(post_field ip)
+		if [ -z "$IP" ]; then json_err "IP required"; exit 0; fi
+		case "$IP" in
+			*[\;\|\&\$\`\(\)]* ) json_err "Invalid IP"; exit 0 ;;
+		esac
+		out=$(/opt/auto-security/monitor.sh unban "$IP" 2>&1)
+		json_ok "$out"
+		;;
+	whitelist-add)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		IP=$(post_field ip)
+		if [ -z "$IP" ]; then json_err "IP required"; exit 0; fi
+		case "$IP" in
+			*[\;\|\&\$\`\(\)]* ) json_err "Invalid entry"; exit 0 ;;
+		esac
+		out=$(/opt/auto-security/monitor.sh whitelist-add "$IP" 2>&1)
+		json_ok "$out"
+		;;
+	whitelist-remove)
+		check_write_auth || { json_err "API password required"; exit 0; }
+		IP=$(post_field ip)
+		if [ -z "$IP" ]; then json_err "IP required"; exit 0; fi
+		case "$IP" in
+			*[\;\|\&\$\`\(\)]* ) json_err "Invalid entry"; exit 0 ;;
+		esac
+		out=$(/opt/auto-security/monitor.sh whitelist-remove "$IP" 2>&1)
+		json_ok "$out"
+		;;
+	*)
+		echo 'Status: 404 Not Found'
+		echo 'Content-Type: application/json'
+		echo ''
+		echo '{"success": false, "error": "Not found"}'
+		;;
+esac

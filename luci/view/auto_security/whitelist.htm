@@ -10,7 +10,13 @@
             <label><%= _("Add to Whitelist") %></label>
             <div class="cbi-value-field">
                 <input type="text" id="whitelist-input" class="cbi-input-text" placeholder="192.168.1.100 or 10.0.0.0/8">
-                <button class="btn btn-success" onclick="addWhitelist()"><%= _("Add") %></button>
+                <button class="btn btn-success" id="whitelist-add-btn"><%= _("Add") %></button>
+            </div>
+        </div>
+        <div class="cbi-value">
+            <label><%= _("API Password") %></label>
+            <div class="cbi-value-field">
+                <input type="password" id="api-password" class="cbi-input-password" placeholder="<%= _("Required for changes (set in Settings)") %>">
             </div>
         </div>
     </div>
@@ -32,89 +38,88 @@
 </div>
 
 <script>
+    function escapeHtml(text) {
+        return String(text == null ? "" : text)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function fetchJson(url, options) {
+        options = options || {};
+        options.credentials = 'same-origin';
+        return fetch(url, options).then(function(response) {
+            if (!response.ok) { throw new Error('HTTP ' + response.status); }
+            return response.text().then(function(text) {
+                try { return JSON.parse(text); }
+                catch (e) { throw new Error('Invalid server response: ' + text.substring(0, 120)); }
+            });
+        });
+    }
+
+    function apiPassword() {
+        var el = document.getElementById('api-password');
+        return el ? el.value : '';
+    }
+
     function loadWhitelist() {
-        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/whitelist") %>')
-            .then(response => response.json())
-            .then(data => {
-                parseWhitelistOutput(data.output);
-            })
-            .catch(err => {
-                document.getElementById('whitelist-tbody').innerHTML = 
-                    '<tr><td colspan="3" class="text-center error">Error: ' + err + '</td></tr>';
+        fetchJson('/cgi-bin/auto-security/api/whitelist')
+            .then(function(data) { parseWhitelistOutput(data.output || ''); })
+            .catch(function(err) {
+                document.getElementById('whitelist-tbody').innerHTML =
+                    '<tr><td colspan="3" class="text-center error">Error: ' + escapeHtml(err.message || err) + '</td></tr>';
             });
     }
 
     function parseWhitelistOutput(output) {
-        const lines = output.split('\n');
-        const tbody = document.getElementById('whitelist-tbody');
+        var lines = String(output).split('\n');
+        var tbody = document.getElementById('whitelist-tbody');
         tbody.innerHTML = '';
-        
-        let hasEntries = false;
-        lines.forEach(line => {
+        var hasEntries = false;
+        lines.forEach(function(line) {
             line = line.trim();
-            if (!line || line.startsWith('#') || line.startsWith('✅')) return;
-            
+            if (!line || line.charAt(0) === '#' ||
+                line.indexOf('WHITELIST') === 0 || line.indexOf('ENTRIES') === 0) { return; }
             hasEntries = true;
-            const entry = line.trim();
-            const type = entry.includes('/') ? '<%= _("CIDR") %>' : '<%= _("IP") %>';
-            
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${escapeHtml(entry)}</td>
-                <td>${type}</td>
-                <td><button class="btn btn-danger btn-xs" onclick="removeWhitelist('${escapeHtml(entry)}')"><%= _("Remove") %></button></td>
-            `;
+            var type = line.indexOf('/') >= 0 ? '<%= _("CIDR") %>' : '<%= _("IP") %>';
+            var row = document.createElement('tr');
+            row.innerHTML =
+                '<td>' + escapeHtml(line) + '</td><td>' + type + '</td>' +
+                '<td><button class="btn btn-danger btn-xs" data-entry="' + escapeHtml(line) + '"><%= _("Remove") %></button></td>';
+            row.querySelector('button').addEventListener('click', function() { removeWhitelist(line); });
             tbody.appendChild(row);
         });
-        
         if (!hasEntries) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center"><%= _("No whitelist entries") %></td></tr>';
         }
     }
 
     function addWhitelist() {
-        const input = document.getElementById('whitelist-input');
-        const entry = input.value.trim();
-        if (!entry) return alert('<%= _("Enter an IP or CIDR") %>');
-        
-        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/whitelist_add") %>', {
+        var input = document.getElementById('whitelist-input');
+        var entry = input.value.trim();
+        if (!entry) { alert('<%= _("Enter an IP or CIDR") %>'); return; }
+        fetchJson('/cgi-bin/auto-security/api/whitelist-add', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'ip=' + encodeURIComponent(entry)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                input.value = '';
-                loadWhitelist();
-            } else {
-                alert('<%= _("Error") %>: ' + (data.error || '<%= _("Unknown error") %>'));
-            }
-        });
+            body: 'ip=' + encodeURIComponent(entry) + '&api_password=' + encodeURIComponent(apiPassword())
+        }).then(function(data) {
+            if (!data.success) { alert('<%= _("Error") %>: ' + (data.error || '<%= _("Unknown error") %>')); return; }
+            input.value = '';
+            loadWhitelist();
+        }).catch(function(err) { alert('<%= _("Error") %>: ' + (err.message || err)); });
     }
 
     function removeWhitelist(entry) {
         if (!confirm('<%= _("Remove") %> ' + entry + '?')) return;
-        
-        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/whitelist_remove") %>', {
+        fetchJson('/cgi-bin/auto-security/api/whitelist-remove', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'ip=' + encodeURIComponent(entry)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                loadWhitelist();
-            } else {
-                alert('<%= _("Error") %>: ' + (data.error || '<%= _("Unknown error") %>'));
-            }
-        });
+            body: 'ip=' + encodeURIComponent(entry) + '&api_password=' + encodeURIComponent(apiPassword())
+        }).then(function(data) {
+            if (!data.success) { alert('<%= _("Error") %>: ' + (data.error || '<%= _("Unknown error") %>')); return; }
+            loadWhitelist();
+        }).catch(function(err) { alert('<%= _("Error") %>: ' + (err.message || err)); });
     }
 
-    function escapeHtml(text) {
-        return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
-    }
-
+    document.getElementById('whitelist-add-btn').addEventListener('click', addWhitelist);
     loadWhitelist();
 </script>
 

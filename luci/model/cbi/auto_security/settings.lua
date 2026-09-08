@@ -2,8 +2,7 @@ m = Map("auto_security", translate("Auto-Security Settings"),
     translate("Configure automated intrusion detection and blocking for OpenWRT."))
 
 -- Core Detection Settings
-s = m:section(TypedSection, "core", translate("Core Detection Settings"))
-s.anonymous = true
+s = m:section(NamedSection, "core", "auto_security", translate("Core Detection Settings"))
 
 o = s:option(Value, "attack_threshold", translate("Attack Threshold"),
     translate("Number of attacks from same IP before auto-ban"))
@@ -25,16 +24,14 @@ o.datatype = "uinteger"
 o.default = 30
 
 -- IPv6
-s = m:section(TypedSection, "ipv6", translate("IPv6 Support"))
-s.anonymous = true
+s = m:section(NamedSection, "ipv6", "auto_security", translate("IPv6 Support"))
 
 o = s:option(Flag, "enable_ipv6", translate("Enable IPv6 Detection"),
     translate("Detect and block IPv6 attackers"))
 o.default = 1
 
 -- CIDR Banning
-s = m:section(TypedSection, "cidr", translate("CIDR-Based Banning"))
-s.anonymous = true
+s = m:section(NamedSection, "cidr", "auto_security", translate("CIDR-Based Banning"))
 
 o = s:option(Flag, "enable_cidr_ban", translate("Enable CIDR Banning"),
     translate("Automatically ban entire /24 ranges when multiple IPs attack"))
@@ -51,8 +48,7 @@ o.datatype = "uinteger"
 o.default = 24
 
 -- Feature Flags
-s = m:section(TypedSection, "features", translate("Feature Flags"))
-s.anonymous = true
+s = m:section(NamedSection, "features", "auto_security", translate("Feature Flags"))
 
 o = s:option(Flag, "enable_auto_ban", translate("Enable Auto-Ban"))
 o.default = 1
@@ -68,8 +64,7 @@ o = s:option(Flag, "enable_correlation", translate("Enable Service Correlation")
 o.default = 1
 
 -- Alert Settings
-s = m:section(TypedSection, "alerts", translate("Alert Settings"))
-s.anonymous = true
+s = m:section(NamedSection, "alerts", "auto_security", translate("Alert Settings"))
 
 o = s:option(ListValue, "alert_methods", translate("Alert Methods"),
     translate("Comma-separated list"))
@@ -109,8 +104,7 @@ o.datatype = "uinteger"
 o.default = 50
 
 -- Service Correlation
-s = m:section(TypedSection, "correlation", translate("Service Correlation"))
-s.anonymous = true
+s = m:section(NamedSection, "correlation", "auto_security", translate("Service Correlation"))
 
 o = s:option(Flag, "enable_mwan3", translate("Enable mwan3 Correlation"))
 o.default = 1
@@ -140,9 +134,8 @@ o.placeholder = "http://127.0.0.1:19999"
 o.default = "http://127.0.0.1:19999"
 
 -- Per-Service Thresholds
-s = m:section(TypedSection, "thresholds", translate("Per-Service Thresholds"),
+s = m:section(NamedSection, "thresholds", "auto_security", translate("Per-Service Thresholds"),
     translate("Override global threshold for specific services"))
-s.anonymous = true
 
 o = s:option(Value, "ssh_threshold", translate("SSH (port 22)"), translate("Default: 3"))
 o.datatype = "uinteger"
@@ -169,8 +162,7 @@ o.datatype = "uinteger"
 o.placeholder = "5"
 
 -- Advanced
-s = m:section(TypedSection, "advanced", translate("Advanced Settings"))
-s.anonymous = true
+s = m:section(NamedSection, "advanced", "auto_security", translate("Advanced Settings"))
 
 o = s:option(Value, "nft_chain", translate("nftables Chain"))
 o.default = "input_wan"
@@ -194,5 +186,71 @@ o.default = 1
 
 o = s:option(Flag, "auto_restore", translate("Auto-restore Bans on Startup"))
 o.default = 1
+
+
+-- API / Admin Password (like AdGuard Home admin password)
+-- Required for changes via web (unban, whitelist, scan, reset).
+-- Stored as SHA256 hash in /opt/auto-security/config/admin.passhash.
+-- Leave both password fields empty to keep the current password.
+s = m:section(NamedSection, "api_auth", "auto_security", translate("API / Admin Password"),
+	translate("Password required for changes via web (unban, whitelist, scan, reset). Leave both fields empty to keep the current password."))
+
+o = s:option(Value, "api_user", translate("Admin Username"))
+o.default = "admin"
+o.rmempty = false
+
+pass_status = s:option(DummyValue, "pass_status", translate("Password Status"))
+function pass_status.cfgvalue(self, section)
+	local f = io.open("/opt/auto-security/config/admin.passhash", "r")
+	if f then
+		f:close()
+		return translate("Password is set - changes require it")
+	end
+	return translate("No password set - changes allowed from LAN without password")
+end
+
+pw1 = s:option(Value, "api_password_new", translate("New Password"))
+pw1.password = true
+pw1.rmempty = true
+
+pw2 = s:option(Value, "api_password_confirm", translate("Confirm New Password"))
+pw2.password = true
+pw2.rmempty = true
+
+function pw2.validate(self, value, section)
+	local v1 = pw1:formvalue(section) or ""
+	value = value or ""
+	if v1 == "" and value == "" then
+		return value
+	end
+	if v1 ~= value then
+		return nil, translate("Passwords do not match")
+	end
+	if #value < 8 then
+		return nil, translate("Password must have at least 8 characters")
+	end
+	return value
+end
+
+function pw1.write(self, section, value)
+	if not value or value == "" then
+		return
+	end
+	local user = self.map:get(section, "api_user") or "admin"
+	if not user or user == "" then
+		user = "admin"
+	end
+	local cmd = string.format(
+		"mkdir -p /opt/auto-security/config && printf '%%s' %s | sha256sum | cut -d' ' -f1 | { read h; printf '%%s:%%s\\n' %s \"$h\" > /opt/auto-security/config/admin.passhash; chmod 600 /opt/auto-security/config/admin.passhash; }",
+		luci.util.shellquote(value), luci.util.shellquote(user))
+	luci.util.exec(cmd)
+end
+
+function pw2.write(self, section, value)
+	-- handled together with api_password_new; never stored
+end
+
+function pw1.remove(self, section) end
+function pw2.remove(self, section) end
 
 return m

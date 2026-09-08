@@ -6,7 +6,7 @@
     </div>
 
     <div class="cbi-section">
-        <button class="btn btn-primary" onclick="loadCorrelation()">
+        <button class="btn btn-primary" id="correlation-refresh">
             <span class="glyphicon glyphicon-refresh"></span> <%= _("Refresh Correlation Report") %>
         </button>
     </div>
@@ -19,26 +19,33 @@
 </div>
 
 <script>
+    function escapeHtml(text) {
+        return String(text == null ? "" : text)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function loadCorrelation() {
-        const contentEl = document.getElementById('correlation-content');
+        var contentEl = document.getElementById('correlation-content');
         contentEl.innerHTML = '<div class="text-center"><%= _("Loading...") %></div>';
-        
-        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/correlation") %>')
-            .then(response => response.json())
-            .then(data => {
-                contentEl.innerHTML = '<pre style="white-space: pre-wrap; font-family: monospace;">' + escapeHtml(data.output) + '</pre>';
+        fetch('/cgi-bin/auto-security/api/correlation', {credentials: 'same-origin'})
+            .then(function(response) {
+                if (!response.ok) { throw new Error('HTTP ' + response.status); }
+                return response.text().then(function(text) {
+                    try { return JSON.parse(text); }
+                    catch (e) { throw new Error('Invalid server response: ' + text.substring(0, 120)); }
+                });
             })
-            .catch(err => {
-                contentEl.innerHTML = '<div class="error">Error: ' + err + '</div>';
+            .then(function(data) {
+                contentEl.innerHTML = '<pre style="white-space: pre-wrap; font-family: monospace;">' + escapeHtml(data.output || '') + '</pre>';
+            })
+            .catch(function(err) {
+                contentEl.innerHTML = '<div class="error">Error: ' + escapeHtml(err.message || err) + '</div>';
             });
     }
 
-    function escapeHtml(text) {
-        return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
-    }
-
-    // Auto-load on page load
+    document.getElementById('correlation-refresh').addEventListener('click', loadCorrelation);
     document.addEventListener('DOMContentLoaded', loadCorrelation);
+    loadCorrelation();
 </script>
 
 <%+footer%>

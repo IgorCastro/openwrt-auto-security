@@ -7,10 +7,9 @@
 
     <div class="cbi-section">
         <div class="btn-group" role="group">
-            <button class="btn btn-default active" id="btn-banlog" onclick="showLog('ban')"><%= _("Ban Log") %></button>
-            <button class="btn btn-default" id="btn-cidrlog" onclick="showLog('cidr')"><%= _("CIDR Ban Log") %></button>
-            <button class="btn btn-default" id="btn-correlation" onclick="showLog('correlation')"><%= _("Correlation Log") %></button>
-            <button class="btn btn-default" id="btn-system" onclick="showLog('system')"><%= _("System Log (auto-security)") %></button>
+            <button class="btn btn-default active" id="btn-banlog"><%= _("Ban Log") %></button>
+            <button class="btn btn-default" id="btn-cidrlog"><%= _("CIDR Ban Log") %></button>
+            <button class="btn btn-default" id="btn-system"><%= _("System Log (auto-security)") %></button>
         </div>
     </div>
 
@@ -20,9 +19,6 @@
         </div>
         <div id="log-cidr" class="log-panel" style="display:none;">
             <pre id="log-cidr-content" class="log-content"><%= _("Loading...") %></pre>
-        </div>
-        <div id="log-correlation" class="log-panel" style="display:none;">
-            <pre id="log-correlation-content" class="log-content"><%= _("Loading...") %></pre>
         </div>
         <div id="log-system" class="log-panel" style="display:none;">
             <pre id="log-system-content" class="log-content"><%= _("Loading...") %></pre>
@@ -37,60 +33,44 @@
 </style>
 
 <script>
+    function escapeHtml(text) {
+        return String(text == null ? "" : text)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function showLog(type) {
-        // Update button states
-        document.querySelectorAll('.btn-group .btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.btn-group .btn').forEach(function(btn) { btn.classList.remove('active'); });
         document.getElementById('btn-' + type).classList.add('active');
-        
-        // Show/hide panels
-        document.querySelectorAll('.log-panel').forEach(panel => panel.style.display = 'none');
+        document.querySelectorAll('.log-panel').forEach(function(panel) { panel.style.display = 'none'; });
         document.getElementById('log-' + type).style.display = 'block';
-        
-        // Load content if not loaded
         loadLog(type);
     }
 
     function loadLog(type) {
-        const contentEl = document.getElementById('log-' + type + '-content');
-        if (contentEl.dataset.loaded === 'true') return;
-        
-        let cmd;
-        switch(type) {
-            case 'ban': cmd = 'cat /opt/auto-security/logs/banned_ips.log 2>/dev/null | tail -100'; break;
-            case 'cidr': cmd = 'cat /opt/auto-security/logs/cidr_banlist.txt 2>/dev/null | tail -100'; break;
-            case 'correlation': cmd = 'cat /opt/auto-security/logs/correlation.log 2>/dev/null | tail -100'; break;
-            case 'system': cmd = 'logread -e AUTO-SECURITY 2>/dev/null | tail -100'; break;
-        }
-        
-        fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/scan") %>', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'cmd=' + encodeURIComponent(cmd)
-        })
-        .then(response => response.json())
-        .then(data => {
-            // We'll use a different approach - direct file read via API
-            fetch('<%= luci.dispatcher.build_url("admin/services/auto_security/api/status") %>')
-                .then(r => r.json())
-                .then(d => {
-                    // For logs, we'll read directly
-                    fetch('/cgi-bin/luci/admin/services/auto_security/api/log?type=' + type)
-                        .then(r => r.text())
-                        .then(text => {
-                            document.getElementById('log-' + type + '-content').textContent = text || '<%= _("No log entries") %>';
-                        })
-                        .catch(() => {
-                            document.getElementById('log-' + type + '-content').textContent = '<%= _("Log file not found or empty") %>';
-                        });
-                });
-        });
-        
-        // Simpler approach - use the existing API
+        var contentEl = document.getElementById('log-' + type + '-content');
         contentEl.textContent = '<%= _("Loading...") %>';
+        var action = (type === 'ban') ? 'status' : (type === 'cidr' ? 'banned' : 'live');
+        fetch('/cgi-bin/auto-security/api/' + action, {credentials: 'same-origin'})
+            .then(function(response) {
+                if (!response.ok) { throw new Error('HTTP ' + response.status); }
+                return response.text().then(function(text) {
+                    try { return JSON.parse(text); }
+                    catch (e) { throw new Error('Invalid server response: ' + text.substring(0, 120)); }
+                });
+            })
+            .then(function(data) {
+                contentEl.textContent = data.output || '<%= _("No log entries") %>';
+            })
+            .catch(function(err) {
+                contentEl.textContent = 'Error: ' + (err.message || err);
+            });
     }
 
-    // Load ban log by default
-    document.addEventListener('DOMContentLoaded', () => loadLog('ban'));
+    document.getElementById('btn-banlog').addEventListener('click', function() { showLog('ban'); });
+    document.getElementById('btn-cidrlog').addEventListener('click', function() { showLog('cidr'); });
+    document.getElementById('btn-system').addEventListener('click', function() { showLog('system'); });
+    document.addEventListener('DOMContentLoaded', function() { loadLog('ban'); });
+    loadLog('ban');
 </script>
 
 <%+footer%>
