@@ -88,10 +88,26 @@ generate_correlation_report() {
         # Check if AdGuard is running
         if pgrep -f "AdGuardHome" >/dev/null; then
             echo "   Status: Running"
-            # Try to get stats from API
-            curl -s -u "admin:$(cat /root/adguard-admin.txt 2>/dev/null | cut -d' ' -f2)" \
-                http://127.0.0.1:3000/control/stats 2>/dev/null | \
-            grep -E '"dns_queries"|"blocked"' | head -5 | sed 's/^/   /'
+            # Stats via API using credentials from auto-security.conf
+            # (password file holds 'user pass' or bare 'pass'; root-only 0600)
+            AG_PASS=""
+            if [ -n "$ADGUARD_API_PASS_FILE" ] && [ -f "$ADGUARD_API_PASS_FILE" ]; then
+                AG_PASS=$(awk '{print $NF}' "$ADGUARD_API_PASS_FILE" 2>/dev/null)
+            fi
+            if [ -n "$AG_PASS" ]; then
+                AG_RESP=$(curl -s --max-time 5 -w '\nHTTP_CODE:%{http_code}' -u "${ADGUARD_API_USER:-admin}:$AG_PASS" \
+                    "${ADGUARD_API_URL:-http://127.0.0.1:3000}/control/stats" 2>/dev/null)
+                AG_CODE=$(printf "%s" "$AG_RESP" | sed -n 's/^HTTP_CODE://p' | tail -1)
+                if [ "$AG_CODE" = "200" ]; then
+                    printf "%s" "$AG_RESP" | grep -E '"dns_queries"|"blocked"' | head -5 | sed 's/^/   /'
+                elif [ "$AG_CODE" = "401" ] || [ "$AG_CODE" = "403" ]; then
+                    echo "   API: authentication failed (check user/password in LuCI: Auto-Security > Settings > Correlation)"
+                else
+                    echo "   API: unreachable (HTTP ${AG_CODE:-???})"
+                fi
+            else
+                echo "   API: not configured (set the AdGuard password in LuCI: Auto-Security > Settings > Correlation)"
+            fi
         else
             echo "   Status: Stopped"
         fi

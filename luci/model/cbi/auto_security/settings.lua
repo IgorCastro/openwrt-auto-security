@@ -123,8 +123,36 @@ o.default = "http://127.0.0.1:3000"
 o = s:option(Value, "adguard_api_user", translate("AdGuard API User"))
 o.default = "admin"
 
-o = s:option(Value, "adguard_api_pass_file", translate("AdGuard Password File"))
-o.default = "/root/adguard-admin.txt"
+o = s:option(DummyValue, "ag_pass_status", translate("API Password Status"))
+function o.cfgvalue(self, section)
+	local f = io.open("/root/adguard-admin.txt", "r")
+	if f then
+		f:close()
+		return translate("Password is set")
+	end
+	return translate("No password set - stats unavailable until set below")
+end
+
+agpw1 = s:option(Value, "ag_password_new", translate("AdGuard Admin Password"))
+agpw1.password = true
+agpw1.rmempty = true
+agpw1.description = translate("Saved to /root/adguard-admin.txt (root-only, mode 600). Leave empty to keep the current password.")
+
+function agpw1.write(self, section, value)
+	if not value or value == "" then
+		return
+	end
+	local user = self.map:get(section, "adguard_api_user") or "admin"
+	if not user or user == "" then
+		user = "admin"
+	end
+	local cmd = string.format(
+		"printf '%%s %%s' %s %s > /root/adguard-admin.txt && chmod 600 /root/adguard-admin.txt",
+		luci.util.shellquote(user), luci.util.shellquote(value))
+	luci.util.exec(cmd)
+end
+
+function agpw1.remove(self, section) end
 
 o = s:option(Flag, "enable_netdata", translate("Enable Netdata Correlation"))
 o.default = 1
